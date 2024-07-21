@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from enum import Enum
 from random import choice
 
 BASE_LEVEL_EXP = 200
@@ -16,28 +17,13 @@ class Character:
         self.Spd = Spd
         self.maxHp = maxHp
         self.status = CharacterStatus()
-        # {
-        #     'burn'      : False, # Continuously take damage during the duration (if the damage is fire damage)
-        #     'burn-dur'  : 0,
-        #     'guard'     : False, # Skip turn, and immediately attack after being attacked
-        #     'poisoned'  : False, # Continuously take damage until cured or Hp = 1
-        #     'healing'   : False, # Continuously heal during the duration
-        #     'heal-dur'  : 0,
-        #     'sleep'     : False, # When true, the character will skip turn until attacked or end of duration
-        #     'sleep-dur' : 0,
-        #     'knocked'   : False, # True if Hp <= 0, Unable to play until revived
-        #     'pow-buff-dur'  : 0,
-        #     'pow-nerf-dur'  : 0,
-        #     'def-buff-dur'  : 0,
-        #     'def-nerf-dur'  : 0,
-        # }
         self.skills = []
     
     def add_skill(self, skill: 'Skill'):
         self.skills.append(skill)
     
-    def take_damage(self, dmg: int):
-        self.Hp -= round(dmg - 0.01 * (self.Def + self.DefBuff - self.DefNerf) - dmg * 0.2 * (self.status.guard or self.status.counter))
+    def take_damage(self, dmg):
+        self.Hp -= round(dmg)
         if self.Hp < 0:
             self.Hp = 0
             self.status.knocked_out()
@@ -147,16 +133,6 @@ class PlayerAction:
     
     def use_skill(self, index):
         self.performer.skills[index].execute(self.performer, self.target)
-
-    # def damage_skill(self, index):
-    #     self.performer.skills[index](self.performer, self.target)
-        # self.target.takeDamage(dmg)
-        # self.performer.paySkill(price)
-    
-    # def heal_skill(self, index):
-    #     self.performer.skills[index](self.performer, self.target)
-        # self.target.restoreHp(healPower)
-        # self.performer.paySkill(price)
     
     def do_nothing(self):
         # Just pass the turn
@@ -169,14 +145,6 @@ class EnemyAction:
 
     def use_skill(self, index):
         self.performer.skills[index](self.performer, self.target)
-
-    # def damage_skill(self, index):
-    #     self.performer.skills[index](self.performer, self.target)
-    #     self.target.takeDamage(dmg)
-    
-    # def heal_skill(self, index):
-    #     self.performer.skills[index](self.performer, self.target)
-    #     self.target.restoreHp(dmg)
     
     def do_nothing(self):
         # Just pass the turn
@@ -190,6 +158,14 @@ class Strategy(ABC):
 
 # Skills
 class Skill(ABC):
+    def net_damage(dmg: float|int, target: Character, dmgType) -> int:
+        return max({
+        # Shall be modified next time
+           DamageType.PHYSICAL  : dmg - 0.01*(target.Def + target.DefBuff - target.DefNerf) - 0.2 * dmg * (target.status.guard or target.status.counter),
+           DamageType.MAGICAL   : dmg - 0.01*(target.Def + target.DefBuff - target.DefNerf) - 0.2 * dmg * (target.status.guard or target.status.counter),
+           DamageType.TRUE      : dmg 
+        }[dmgType], 0)
+
     @abstractmethod
     def execute(self, performer: Character, target: Character) -> None:
         pass
@@ -201,7 +177,8 @@ class Hit(Skill):
         self.cost = 3
 
     def execute(self, performer: Character, target: Character) -> None:
-        target.take_damage(performer.Pow)
+        gross_dmg = performer.Pow
+        target.take_damage(Skill.net_damage(gross_dmg, target, DamageType.PHYSICAL))
         try:
             performer.pay_skill(self.cost) # exclusive to Players
         except AttributeError:
@@ -213,20 +190,13 @@ class Ignition(Skill):
         self.cost = 5
     
     def execute(self, performer: Character, target: Character) -> None:
-        target.take_damage(round(performer.Pow * 1.5 + 0.2 * (performer.maxHp - performer.Hp)))
+        gross_dmg = performer.Pow * 1.5 + 0.2 * (performer.maxHp - performer.Hp)
+        target.take_damage(Skill.net_damage(gross_dmg, target, DamageType.MAGICAL))
         target.status.enable_burn(1)
         try:
             performer.pay_skill(self.cost) # exclusive to Players
         except AttributeError:
             return
-
-# def ignition(performer: Character, target: Character):
-#     target.take_damage(round(performer.Pow * 1.5 + 0.2 * (performer.maxHp - performer.Hp)))
-#     target.status.enable_burn(1)
-#     try:
-#         performer.paySkill(5) # exclusive to Players
-#     except AttributeError:
-#         return
 
 # Heal/buff
 class Heal(Skill):
@@ -235,11 +205,17 @@ class Heal(Skill):
         self.cost = 4
 
     def execute(self, performer: Character, target: Character) -> None:
-        target.restore_Hp(round(0.2 * target.maxHp + 0.1 * performer.Pow))
+        heal_amount = max(0.2 * target.maxHp + 0.1 * performer.Pow, 0)
+        target.restore_Hp(round(heal_amount))
         try:
             performer.pay_skill(self.cost) # exclusive to Players
         except AttributeError:
             return
+
+class DamageType(Enum):
+    TRUE = 0
+    PHYSICAL = 1
+    MAGICAL = 2
 
 # Game Data
 playableData = [PlayableCharacter('Patricia', 150, 24, 32, 24, 100),
