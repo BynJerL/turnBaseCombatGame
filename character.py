@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from enum import Enum
 from random import choice
+from game import Game
 
 BASE_LEVEL_EXP = 200
 
@@ -49,7 +50,7 @@ class PlayableCharacter(Character):
         self.Sp -= amount
 
 class EnemyCharacter(Character):
-    def __init__(self, name: str, maxHp: int, Pow: int, Def: int, Spd: int, strategy: function) -> None:
+    def __init__(self, name: str, maxHp: int, Pow: int, Def: int, Spd: int, strategy) -> None:
         super().__init__(name, maxHp, Pow, Def, Spd)
         self.strategy = strategy # Strategy(performer, target = {'ally' ..., 'opponent' ...})
 
@@ -128,7 +129,7 @@ class PlayerAction:
     
     def basic_attack(self):
         dmg = self.performer.Pow * 0.75
-        self.target.take_damage(dmg)
+        self.target.take_damage(Skill.net_damage(dmg, self.target, DamageType.PHYSICAL))
         self.performer.recover_Sp(choice([2,3]))
     
     def use_skill(self, index):
@@ -150,14 +151,14 @@ class EnemyAction:
         # Just pass the turn
         pass
 
-# Strategy
-class Strategy(ABC):
-    @abstractmethod
-    def choose_action(self, performer: EnemyCharacter, target: list):
-        pass
-
 # Skills
 class Skill(ABC):
+    def __init__(self) -> None:
+        self.name = None
+        self.cost = None
+        self.range = None
+        self.type = SkillType.NONE
+
     def net_damage(dmg: float|int, target: Character, dmgType) -> int:
         return max({
         # Shall be modified next time
@@ -170,15 +171,24 @@ class Skill(ABC):
     def execute(self, performer: Character, target: Character) -> None:
         pass
 
+class SkillType(Enum):
+    ATTACK = 0
+    HEAL = 1
+    BUFF = 2
+    NONE = 3
+
 # Damage
 class Hit(Skill):
     def __init__(self) -> None:
         super().__init__()
+        self.name = "Hit"
         self.cost = 3
+        self.range = 1
+        self.type = SkillType.ATTACK
 
     def execute(self, performer: Character, target: Character) -> None:
         gross_dmg = performer.Pow
-        target.take_damage(Skill.net_damage(gross_dmg, target, DamageType.PHYSICAL))
+        target.take_damage(self.net_damage(gross_dmg, target, DamageType.PHYSICAL))
         try:
             performer.pay_skill(self.cost) # exclusive to Players
         except AttributeError:
@@ -187,11 +197,14 @@ class Hit(Skill):
 class Ignition(Skill):
     def __init__(self) -> None:
         super().__init__()
+        self.name = "Ignition"
         self.cost = 5
+        self.range = 1
+        self.type = SkillType.ATTACK
     
     def execute(self, performer: Character, target: Character) -> None:
         gross_dmg = performer.Pow * 1.5 + 0.2 * (performer.maxHp - performer.Hp)
-        target.take_damage(Skill.net_damage(gross_dmg, target, DamageType.MAGICAL))
+        target.take_damage(self.net_damage(gross_dmg, target, DamageType.MAGICAL))
         target.status.enable_burn(1)
         try:
             performer.pay_skill(self.cost) # exclusive to Players
@@ -202,7 +215,10 @@ class Ignition(Skill):
 class Heal(Skill):
     def __init__(self) -> None:
         super().__init__()
+        self.name = "Heal"
         self.cost = 4
+        self.range = 1
+        self.type = SkillType.HEAL
 
     def execute(self, performer: Character, target: Character) -> None:
         heal_amount = max(0.2 * target.maxHp + 0.1 * performer.Pow, 0)
@@ -212,17 +228,49 @@ class Heal(Skill):
         except AttributeError:
             return
 
+# Do nothing
+class DoNothing(Skill):
+    def __init__(self) -> None:
+        super().__init__()
+        self.name = "Do Nothing"
+        self.cost = 0
+        self.range = 1
+        self.type = SkillType.NONE
+    
+    def execute(self, performer: Character, target: Character) -> None:
+        return
+
 class DamageType(Enum):
     TRUE = 0
     PHYSICAL = 1
     MAGICAL = 2
 
+# Strategy
+class Strategy(ABC):
+    @abstractmethod
+    def choose_action(self, performer: EnemyCharacter, targets: list):
+        pass
+
+class RandomStrategy(Strategy):
+    def choose_action(self, performer: EnemyCharacter, targets: list):
+        used_skill:Skill = choice(performer.skills)
+        if used_skill.type == SkillType.ATTACK:
+            targetID = choice([t for t in targets if t[0] == 'C'])
+            target = Game().userCharas[targetID]
+        elif used_skill.type == SkillType.HEAL or used_skill.type == SkillType.BUFF:
+            targetID = choice([t for t in targets if t[0] == 'H'])
+            target = Game().userCharas[targetID]
+        else:
+            return
+        used_skill.execute(performer, target)
+
 # Game Data
 playableData = [PlayableCharacter('Patricia', 150, 24, 32, 24, 100),
 ]
 
-enemyData = [EnemyCharacter('Crook', 120, 20, 20, 100, lambda: None),
-             EnemyCharacter('Helmed Crook', 150, 20, 20, 100, lambda: None),
-             EnemyCharacter('Puppet', 80, 30, 10, 120, lambda: None),
+enemyData = [EnemyCharacter('Crook Puppet', 120, 20, 20, 100, lambda: None),
+             EnemyCharacter('Helmed Crook Puppet', 150, 20, 20, 100, lambda: None),
+             EnemyCharacter('Archer Crook Puppet', 80, 30, 10, 100, lambda: None),
+             EnemyCharacter('Magus Crook Puppet', 110, 28, 10, 100, lambda: None),
              EnemyCharacter('Devil Wasp', 150, 25, 35, 110, lambda: None)
 ]
